@@ -38,4 +38,6 @@ jobs:
         working-directory: ./infra
         run: |
           terraform init
+          terraform import aws_dynamodb_table.titanic_table sobreviventes_titanic || true
+          terraform import aws_iam_role.lambda_exec_role lambda_mlops_exec_role || true
           terraform apply -auto-approve
