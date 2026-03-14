@@ -77,11 +77,11 @@ flowchart LR
 │   ├── schemas.py
 │   ├── requirements.txt
 │   └── modelo/
+│       ├── treinamento.ipynb
 │       └── model.pkl
 ├── tests/
 │   └── test_api.py
 ├── Dockerfile
-├── treinamento.ipynb
 └── README.md
 ```
 
