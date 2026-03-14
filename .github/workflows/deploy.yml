@@ -31,40 +31,35 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Criar repositório ECR se não existir
+      - name: Deletar recursos recriáveis se existirem
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
-          aws ecr describe-repositories --repository-names titanic-inference-api 2>/dev/null || \
-          aws ecr create-repository --repository-name titanic-inference-api
+          # Lambda
+          aws lambda delete-function --function-name titanic_inference_api 2>/dev/null && \
+            echo "Lambda deletada." || echo "Lambda não existe, seguindo."
 
-      - name: Build e push da imagem para o ECR
+          # ECR — esvazia e deleta o repositório
+          aws ecr batch-delete-image \
+            --repository-name titanic-inference-api \
+            --image-ids "$(aws ecr list-images --repository-name titanic-inference-api \
+              --query 'imageIds[*]' --output json 2>/dev/null || echo '[]')" 2>/dev/null || true
+          aws ecr delete-repository --repository-name titanic-inference-api --force 2>/dev/null && \
+            echo "ECR deletado." || echo "ECR não existe, seguindo."
+
+      - name: Criar repositório ECR e fazer build da imagem
         env:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
           ECR_URI=${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/titanic-inference-api
 
+          aws ecr create-repository --repository-name titanic-inference-api
+
           aws ecr get-login-password --region us-east-1 | \
             docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com
 
-          # find com sort garante ordem determinística — evita falsos rebuilds por variação de glob
-          # Inclui apenas arquivos .py para excluir binários como model.pkl
-          LOCAL_HASH=$(cat Dockerfile src/requirements.txt \
-            $(find src -name "*.py" | sort) | md5sum | cut -d' ' -f1)
-
-          REMOTE_HASH=$(aws ecr list-tags-for-resource \
-            --resource-arn arn:aws:ecr:us-east-1:${AWS_ACCOUNT_ID}:repository/titanic-inference-api \
-            --query "tags[?Key=='build-hash'].Value" --output text 2>/dev/null || echo "")
-
-          if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
-            echo "Alterações detectadas — realizando novo build..."
-            docker build -t ${ECR_URI}:latest .
-            docker push ${ECR_URI}:latest
-            aws ecr tag-resource \
-              --resource-arn arn:aws:ecr:us-east-1:${AWS_ACCOUNT_ID}:repository/titanic-inference-api \
-              --tags Key=build-hash,Value=${LOCAL_HASH}
-            echo "Nova imagem publicada no ECR."
-          else
-            echo "Sem alterações — reutilizando imagem existente no ECR."
-          fi
+          docker build -t ${ECR_URI}:latest .
+          docker push ${ECR_URI}:latest
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -76,13 +71,12 @@ jobs:
         run: |
           terraform init
 
-          terraform import aws_ecr_repository.titanic_repo titanic-inference-api || true
-          terraform import aws_ecr_lifecycle_policy.titanic_repo_policy titanic-inference-api || true
+          # Recursos estáveis — importados para evitar recriação desnecessária
           terraform import aws_dynamodb_table.titanic_table sobreviventes_titanic || true
           terraform import aws_iam_role.lambda_exec_role lambda_mlops_exec_role || true
           terraform import aws_iam_policy.lambda_policy arn:aws:iam::${AWS_ACCOUNT_ID}:policy/lambda_mlops_policy || true
-          terraform import aws_lambda_function.titanic_ml titanic_inference_api || true
 
+          # API Gateway — preservado para manter o endpoint fixo
           API_ID=$(aws apigateway get-rest-apis --query "items[?name=='titanic-ml-api'].id" --output text)
           if [ -n "$API_ID" ]; then
             terraform import aws_api_gateway_rest_api.titanic_api $API_ID || true
