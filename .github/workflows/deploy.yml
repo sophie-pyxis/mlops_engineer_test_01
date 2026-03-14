@@ -32,8 +32,6 @@ jobs:
           aws-region: us-east-1
 
       - name: Deletar recursos recriáveis se existirem
-        env:
-          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
           # Lambda
           aws lambda delete-function --function-name titanic_inference_api 2>/dev/null && \
@@ -70,6 +68,10 @@ jobs:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
           terraform init
+
+          # ECR criado pelo pipeline — importado para o Terraform não tentar recriar
+          terraform import aws_ecr_repository.titanic_repo titanic-inference-api || true
+          terraform import aws_ecr_lifecycle_policy.titanic_repo_policy titanic-inference-api || true
 
           # Recursos estáveis — importados para evitar recriação desnecessária
           terraform import aws_dynamodb_table.titanic_table sobreviventes_titanic || true
