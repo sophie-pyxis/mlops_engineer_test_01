@@ -37,7 +37,6 @@ resource "aws_iam_policy" "lambda_policy" {
     Version = "2012-10-17"
     Statement = [
       {
-        # Permissão para gravar logs no CloudWatch
         Effect   = "Allow"
         Action   = [
           "logs:CreateLogGroup",
@@ -47,7 +46,6 @@ resource "aws_iam_policy" "lambda_policy" {
         Resource = "arn:aws:logs:*:*:*"
       },
       {
-        # Permissão restrita ao CRUD da tabela sobreviventes_titanic
         Effect   = "Allow"
         Action   = [
           "dynamodb:PutItem",
@@ -66,20 +64,15 @@ resource "aws_iam_role_policy_attachment" "lambda_attach" {
   policy_arn = aws_iam_policy.lambda_policy.arn
 }
 
-# Compacta src/ em ZIP para deploy — hash garante atualização automática ao mudar o código
-data "archive_file" "lambda_zip" {
-  type        = "zip"
-  source_dir  = "${path.module}/../src"
-  output_path = "${path.module}/lambda.zip"
-}
-
+# Pacote Lambda lido do S3 — necessário pois o ZIP com dependências ultrapassa 50MB
 resource "aws_lambda_function" "titanic_ml" {
-  filename         = data.archive_file.lambda_zip.output_path
+  s3_bucket        = "mlops-test-itau"
+  s3_key           = "lambda.zip"
   function_name    = "titanic_inference_api"
   role             = aws_iam_role.lambda_exec_role.arn
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.9"
-  source_code_hash = data.archive_file.lambda_zip.output_base64sha256
+  source_code_hash = filebase64sha256("${path.module}/lambda.zip")
   # 30s para acomodar Cold Start do Scikit-Learn; 512MB para carregamento do modelo pkl
   timeout          = 30
   memory_size      = 512

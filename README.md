@@ -13,6 +13,7 @@ flowchart LR
     Lambda[AWS Lambda]
     Model[(model.pkl)]
     Dynamo[(DynamoDB)]
+    S3[(S3 Bucket)]
 
     Client -->|HTTP Request| APIGW
     APIGW -->|Invoke| Lambda
@@ -21,6 +22,7 @@ flowchart LR
     Dynamo -->|Item| Lambda
     Lambda -->|HTTP Response| APIGW
     APIGW -->|HTTP Response| Client
+    S3 -->|lambda.zip| Lambda
 ```
 
 **Fluxo da aplicação:**
@@ -30,6 +32,8 @@ flowchart LR
 3. A Lambda carrega o modelo RandomForest e executa a inferência.
 4. O resultado é persistido no DynamoDB.
 5. A resposta é retornada ao cliente com o ID e a probabilidade de sobrevivência.
+
+> O bucket S3 `mlops-test-itau` é utilizado como intermediário no deploy — o pacote Lambda ultrapassa o limite de 50MB de upload direto devido às dependências do Scikit-learn.
 
 ---
 
@@ -101,16 +105,16 @@ O modelo foi treinado no notebook `treinamento.ipynb` usando o dataset público 
 
 **Features de entrada (ordem obrigatória no array):**
 
-| Posição | Feature      | Descrição                | Valores                         |
-|---------|--------------|--------------------------|---------------------------------|
-| 0       | `Age`        | Idade do passageiro      | número decimal (ex: `22.0`)     |
-| 1       | `Parch`      | Pais/filhos a bordo      | inteiro (ex: `0`)               |
-| 2       | `SibSp`      | Irmãos/cônjuge a bordo   | inteiro (ex: `1`)               |
-| 3       | `Fare`       | Valor da passagem        | número decimal (ex: `7.25`)     |
-| 4       | `Pclass`     | Classe da cabine         | `1`, `2` ou `3`                 |
-| 5       | `Sex_male`   | Sexo                     | `1` = masculino, `0` = feminino |
-| 6       | `Embarked_Q` | Embarcou em Queenstown   | `1` = sim, `0` = não            |
-| 7       | `Embarked_S` | Embarcou em Southampton  | `1` = sim, `0` = não            |
+| Posição | Feature      | Descrição               | Valores                         |
+|---------|--------------|-------------------------|---------------------------------|
+| 0       | `Age`        | Idade do passageiro     | número decimal (ex: `22.0`)     |
+| 1       | `Parch`      | Pais/filhos a bordo     | inteiro (ex: `0`)               |
+| 2       | `SibSp`      | Irmãos/cônjuge a bordo  | inteiro (ex: `1`)               |
+| 3       | `Fare`       | Valor da passagem       | número decimal (ex: `7.25`)     |
+| 4       | `Pclass`     | Classe da cabine        | `1`, `2` ou `3`                 |
+| 5       | `Sex_male`   | Sexo                    | `1` = masculino, `0` = feminino |
+| 6       | `Embarked_Q` | Embarcou em Queenstown  | `1` = sim, `0` = não            |
+| 7       | `Embarked_S` | Embarcou em Southampton | `1` = sim, `0` = não            |
 
 > Se o passageiro embarcou em Cherbourg, `Embarked_Q = 0` e `Embarked_S = 0`.
 
@@ -120,7 +124,7 @@ O modelo foi treinado no notebook `treinamento.ipynb` usando o dataset público 
 
 Documentação completa em `docs/openapi.yaml` (OpenAPI 3.0).
 
-**Base URL** (disponível após o deploy):
+**Base URL:**
 ```
 https://{id}.execute-api.us-east-1.amazonaws.com/v1
 ```
@@ -161,15 +165,17 @@ https://{id}.execute-api.us-east-1.amazonaws.com/v1
 
 A infraestrutura é provisionada automaticamente via **Terraform** (`infra/main.tf`).
 
-| Recurso Terraform          | Descrição                              |
-|----------------------------|----------------------------------------|
-| `aws_dynamodb_table`       | Tabela On-Demand — sem provisionamento |
-| `aws_lambda_function`      | Função de inferência (Python 3.9)      |
-| `aws_api_gateway_rest_api` | Gateway provisionado via OpenAPI       |
-| `aws_iam_role`             | Execution role da Lambda               |
-| `aws_iam_policy`           | Política de privilégio mínimo          |
-| `aws_lambda_permission`    | Autoriza o Gateway invocar a Lambda    |
-| `aws_api_gateway_stage`    | Stage `v1` da API                      |
+| Recurso Terraform              | Descrição                                        |
+|--------------------------------|--------------------------------------------------|
+| `aws_dynamodb_table`           | Tabela On-Demand — sem provisionamento manual    |
+| `aws_lambda_function`          | Função de inferência (Python 3.9) via S3         |
+| `aws_api_gateway_rest_api`     | Gateway provisionado via contrato OpenAPI        |
+| `aws_iam_role`                 | Execution role da Lambda                         |
+| `aws_iam_policy`               | Política de privilégio mínimo                    |
+| `aws_iam_role_policy_attachment` | Vincula a política à role                      |
+| `aws_lambda_permission`        | Autoriza o API Gateway invocar a Lambda          |
+| `aws_api_gateway_deployment`   | Publicação do estado atual da API                |
+| `aws_api_gateway_stage`        | Stage `v1` da API                                |
 
 ---
 
@@ -180,20 +186,28 @@ flowchart LR
     Push([git push master])
     GHA[GitHub Actions]
     Test[pytest]
+    Pkg[Empacotar Lambda]
+    S3[Upload para S3]
     Creds[Credenciais AWS]
-    TFInit[terraform init e import]
-    TFApply[terraform apply]
+    TF[terraform init e import]
+    Apply[terraform apply]
     Deploy([API no ar])
 
     Push --> GHA
     GHA --> Test
-    Test --> Creds
-    Creds --> TFInit
-    TFInit --> TFApply
-    TFApply --> Deploy
+    Test --> Pkg
+    Pkg --> Creds
+    Creds --> S3
+    S3 --> TF
+    TF --> Apply
+    Apply --> Deploy
 ```
 
-Pipeline configurado em `.github/workflows/deploy.yml`. O deploy só é executado se todos os testes passarem.
+**Detalhe do empacotamento:**
+
+Como o pacote com dependências (`scikit-learn`, `scipy`, `numpy`) ultrapassa 70MB, o deploy é feito via S3. O pipeline instala as dependências dentro de `src/`, compacta em `lambda.zip` e faz o upload para o bucket `mlops-test-itau` antes do Terraform.
+
+O Terraform lê o ZIP diretamente do S3 ao provisionar ou atualizar a função Lambda.
 
 ---
 
@@ -232,6 +246,7 @@ terraform apply -auto-approve
 | Compute          | AWS Lambda      |
 | API              | AWS API Gateway |
 | Banco de Dados   | AWS DynamoDB    |
+| Armazenamento    | AWS S3          |
 | IaC              | Terraform       |
 | CI/CD            | GitHub Actions  |
 | Documentação API | OpenAPI 3.0     |
