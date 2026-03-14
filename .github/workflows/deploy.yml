@@ -24,6 +24,10 @@ jobs:
           pip install pytest
           PYTHONPATH=src pytest tests/test_api.py
 
+      - name: Instalar dependências no pacote Lambda
+        run: |
+          pip install -r src/requirements.txt --target src/
+
       - name: Configurar Credenciais AWS
         uses: aws-actions/configure-aws-credentials@v2
         with:
