@@ -11,10 +11,9 @@ flowchart LR
     Client([Client Application])
     APIGW[API Gateway]
     Lambda[AWS Lambda]
-    Layer[Lambda Layer]
+    ECR[(ECR Repository)]
     Model[(model.pkl)]
     Dynamo[(DynamoDB)]
-    S3[(S3 Bucket)]
 
     Client -->|HTTP Request| APIGW
     APIGW -->|Invoke| Lambda
@@ -23,20 +22,18 @@ flowchart LR
     Dynamo -->|Item| Lambda
     Lambda -->|HTTP Response| APIGW
     APIGW -->|HTTP Response| Client
-    S3 -->|lambda.zip| Lambda
-    S3 -->|layer.zip| Layer
-    Layer -->|scikit-learn / boto3| Lambda
+    ECR -->|Container Image| Lambda
 ```
 
 **Fluxo da aplicação:**
 
 1. O cliente envia uma requisição HTTP para o API Gateway.
 2. O API Gateway roteia a chamada para a função AWS Lambda.
-3. A Lambda carrega o modelo RandomForest via Lambda Layer e executa a inferência.
+3. A Lambda executa a partir de uma imagem Docker com o modelo e as dependências embutidas.
 4. O resultado é persistido no DynamoDB.
 5. A resposta é retornada ao cliente com o ID e a probabilidade de sobrevivência.
 
-> As dependências (`scikit-learn`, `scipy`, `numpy`, `boto3`) são empacotadas em um **Lambda Layer** separado para contornar o limite de 250MB descompactado da Lambda. O pipeline só reconstrói o layer quando `requirements.txt` é alterado.
+> A Lambda utiliza **Container Image** (via Amazon ECR) para contornar o limite de 250MB das abordagens de pacote ZIP e Lambda Layer. O limite de imagens é de 10GB, suficiente para acomodar `scikit-learn`, `scipy`, `numpy` e `pandas`.
 
 ---
 
@@ -62,6 +59,7 @@ flowchart LR
 │       └── model.pkl
 ├── tests/
 │   └── test_api.py
+├── Dockerfile
 ├── treinamento.ipynb
 └── README.md
 ```
@@ -168,18 +166,18 @@ https://{id}.execute-api.us-east-1.amazonaws.com/v1
 
 A infraestrutura é provisionada automaticamente via **Terraform** (`infra/main.tf`).
 
-| Recurso Terraform                | Descrição                                     |
-|----------------------------------|-----------------------------------------------|
-| `aws_dynamodb_table`             | Tabela On-Demand — sem provisionamento manual |
-| `aws_lambda_layer_version`       | Layer com dependências Python (via S3)        |
-| `aws_lambda_function`            | Função de inferência — código apenas          |
-| `aws_api_gateway_rest_api`       | Gateway provisionado via contrato OpenAPI     |
-| `aws_iam_role`                   | Execution role da Lambda                      |
-| `aws_iam_policy`                 | Política de privilégio mínimo                 |
-| `aws_iam_role_policy_attachment` | Vincula a política à role                     |
-| `aws_lambda_permission`          | Autoriza o API Gateway invocar a Lambda       |
-| `aws_api_gateway_deployment`     | Publicação do estado atual da API             |
-| `aws_api_gateway_stage`          | Stage `v1` da API                             |
+| Recurso Terraform                | Descrição                                      |
+|----------------------------------|------------------------------------------------|
+| `aws_ecr_repository`             | Repositório de imagens Docker da Lambda        |
+| `aws_dynamodb_table`             | Tabela On-Demand — sem provisionamento manual  |
+| `aws_lambda_function`            | Função via container image (package_type=Image)|
+| `aws_api_gateway_rest_api`       | Gateway provisionado via contrato OpenAPI      |
+| `aws_iam_role`                   | Execution role da Lambda                       |
+| `aws_iam_policy`                 | Política de privilégio mínimo                  |
+| `aws_iam_role_policy_attachment` | Vincula a política à role                      |
+| `aws_lambda_permission`          | Autoriza o API Gateway invocar a Lambda        |
+| `aws_api_gateway_deployment`     | Publicação do estado atual da API              |
+| `aws_api_gateway_stage`          | Stage `v1` da API                              |
 
 ---
 
@@ -190,29 +188,27 @@ flowchart LR
     Push([git push master])
     GHA[GitHub Actions]
     Test[pytest]
-    S3Check{Layer mudou?}
-    BuildLayer[Rebuild layer.zip]
-    SkipLayer[Reutiliza layer.zip]
-    Pkg[Empacota lambda.zip]
+    Check{Imagem mudou?}
+    Build[docker build e push ECR]
+    Skip[Reutiliza imagem ECR]
     TF[terraform init e import]
     Apply[terraform apply]
     Deploy([API no ar])
 
     Push --> GHA
     GHA --> Test
-    Test --> S3Check
-    S3Check -->|sim| BuildLayer
-    S3Check -->|não| SkipLayer
-    BuildLayer --> Pkg
-    SkipLayer --> Pkg
-    Pkg --> TF
+    Test --> Check
+    Check -->|sim| Build
+    Check -->|não| Skip
+    Build --> TF
+    Skip --> TF
     TF --> Apply
     Apply --> Deploy
 ```
 
-**Lógica de cache do Layer:**
+**Lógica de cache da imagem:**
 
-O pipeline computa o MD5 do `requirements.txt` e compara com o hash armazenado em `s3://mlops-test-itau/layer-hash.txt`. Se houver diferença, o `layer.zip` é reconstruído e o hash atualizado. Caso contrário, o layer existente é reutilizado, economizando tempo e largura de banda.
+O pipeline computa o MD5 combinado de `requirements.txt` e `Dockerfile`, e compara com a tag `build-hash` armazenada no repositório ECR. Se houver diferença, a imagem é reconstruída e publicada. Caso contrário, a imagem existente é reutilizada, economizando tempo de build.
 
 ---
 
@@ -233,6 +229,7 @@ Os testes utilizam `MagicMock` para simular o modelo e o DynamoDB — nenhuma ch
 ```bash
 cd infra
 terraform init
+terraform import aws_ecr_repository.titanic_repo titanic-inference-api || true
 terraform import aws_dynamodb_table.titanic_table sobreviventes_titanic || true
 terraform import aws_iam_role.lambda_exec_role lambda_mlops_exec_role || true
 terraform import aws_iam_policy.lambda_policy arn:aws:iam::{account_id}:policy/lambda_mlops_policy || true
@@ -249,9 +246,9 @@ terraform apply -auto-approve
 | Linguagem        | Python 3.9      |
 | ML Framework     | Scikit-learn    |
 | Compute          | AWS Lambda      |
+| Container        | Docker / ECR    |
 | API              | AWS API Gateway |
 | Banco de Dados   | AWS DynamoDB    |
-| Armazenamento    | AWS S3          |
 | IaC              | Terraform       |
 | CI/CD            | GitHub Actions  |
 | Documentação API | OpenAPI 3.0     |

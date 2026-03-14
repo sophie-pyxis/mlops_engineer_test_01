@@ -31,32 +31,40 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Criar bucket S3 se não existir
+      - name: Criar repositório ECR se não existir
         run: |
-          aws s3api create-bucket --bucket mlops-test-itau --region us-east-1 || true
+          aws ecr describe-repositories --repository-names titanic-inference-api 2>/dev/null || \
+          aws ecr create-repository --repository-name titanic-inference-api
 
-      - name: Verificar e atualizar Layer de dependências no S3
+      - name: Build e push da imagem para o ECR
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
-          LOCAL_HASH=$(md5sum src/requirements.txt | cut -d' ' -f1)
-          REMOTE_HASH=$(aws s3 cp s3://mlops-test-itau/layer-hash.txt - 2>/dev/null || echo "")
+          ECR_URI=${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/titanic-inference-api
+
+          # Autentica o Docker no ECR
+          aws ecr get-login-password --region us-east-1 | \
+            docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com
+
+          # Verifica se já existe imagem com o mesmo hash de código e requirements
+          LOCAL_HASH=$(cat src/requirements.txt Dockerfile | md5sum | cut -d' ' -f1)
+          REMOTE_HASH=$(aws ecr list-tags-for-resource \
+            --resource-arn arn:aws:ecr:us-east-1:${AWS_ACCOUNT_ID}:repository/titanic-inference-api \
+            --query "tags[?Key=='build-hash'].Value" --output text 2>/dev/null || echo "")
 
           if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
-            echo "Dependências alteradas — reconstruindo Layer..."
-            mkdir -p layer/python
-            pip install -r src/requirements.txt --target layer/python/
-            cd layer && zip -r ../infra/layer.zip . && cd ..
-            aws s3 cp infra/layer.zip s3://mlops-test-itau/layer.zip
-            echo "$LOCAL_HASH" | aws s3 cp - s3://mlops-test-itau/layer-hash.txt
-            echo "Layer atualizado no S3."
-          else
-            echo "Dependências sem alteração — reutilizando Layer existente no S3."
-            aws s3 cp s3://mlops-test-itau/layer.zip infra/layer.zip
-          fi
+            echo "Imagem desatualizada — realizando novo build..."
+            docker build -t ${ECR_URI}:latest .
+            docker push ${ECR_URI}:latest
 
-      - name: Empacotar código Lambda
-        run: |
-          cd src && zip -r ../infra/lambda.zip . --exclude "*.pyc" --exclude "__pycache__/*" && cd ..
-          aws s3 cp infra/lambda.zip s3://mlops-test-itau/lambda.zip
+            # Atualiza a tag de hash no repositório ECR para cache na próxima execução
+            aws ecr tag-resource \
+              --resource-arn arn:aws:ecr:us-east-1:${AWS_ACCOUNT_ID}:repository/titanic-inference-api \
+              --tags Key=build-hash,Value=${LOCAL_HASH}
+            echo "Nova imagem publicada no ECR."
+          else
+            echo "Imagem sem alterações — reutilizando imagem existente no ECR."
+          fi
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -72,6 +80,7 @@ jobs:
           terraform import aws_iam_role.lambda_exec_role lambda_mlops_exec_role || true
           terraform import aws_iam_policy.lambda_policy arn:aws:iam::${AWS_ACCOUNT_ID}:policy/lambda_mlops_policy || true
           terraform import aws_lambda_function.titanic_ml titanic_inference_api || true
+          terraform import aws_ecr_repository.titanic_repo titanic-inference-api || true
 
           API_ID=$(aws apigateway get-rest-apis --query "items[?name=='titanic-ml-api'].id" --output text)
           if [ -n "$API_ID" ]; then

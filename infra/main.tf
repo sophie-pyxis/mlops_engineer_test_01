@@ -2,6 +2,8 @@ provider "aws" {
   region = "us-east-1"
 }
 
+data "aws_caller_identity" "current" {}
+
 resource "aws_dynamodb_table" "titanic_table" {
   name         = "sobreviventes_titanic"
   billing_mode = "PAY_PER_REQUEST"
@@ -10,6 +12,16 @@ resource "aws_dynamodb_table" "titanic_table" {
   attribute {
     name = "id"
     type = "S"
+  }
+}
+
+# Repositório ECR que armazena a imagem Docker da Lambda
+resource "aws_ecr_repository" "titanic_repo" {
+  name                 = "titanic-inference-api"
+  image_tag_mutability = "MUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
   }
 }
 
@@ -64,30 +76,15 @@ resource "aws_iam_role_policy_attachment" "lambda_attach" {
   policy_arn = aws_iam_policy.lambda_policy.arn
 }
 
-# Layer com dependências pesadas (scikit-learn, scipy, numpy, boto3)
-# Separado do código para contornar o limite de 250MB descompactado da Lambda
-# O pipeline só reconstrói e faz upload do layer.zip quando requirements.txt muda
-resource "aws_lambda_layer_version" "dependencies" {
-  layer_name          = "titanic-ml-dependencies"
-  s3_bucket           = "mlops-test-itau"
-  s3_key              = "layer.zip"
-  source_code_hash    = filebase64sha256("${path.module}/layer.zip")
-  compatible_runtimes = ["python3.9"]
-}
-
-# Função Lambda lendo apenas o código-fonte do S3 — dependências via Layer
+# Função Lambda via container image — sem limite de 250MB, suporta até 10GB
 resource "aws_lambda_function" "titanic_ml" {
-  s3_bucket        = "mlops-test-itau"
-  s3_key           = "lambda.zip"
-  function_name    = "titanic_inference_api"
-  role             = aws_iam_role.lambda_exec_role.arn
-  handler          = "lambda_function.lambda_handler"
-  runtime          = "python3.9"
-  source_code_hash = filebase64sha256("${path.module}/lambda.zip")
-  # 30s para acomodar Cold Start do Scikit-Learn; 512MB para carregamento do modelo pkl
-  timeout          = 30
-  memory_size      = 512
-  layers           = [aws_lambda_layer_version.dependencies.arn]
+  function_name = "titanic_inference_api"
+  role          = aws_iam_role.lambda_exec_role.arn
+  package_type  = "Image"
+  image_uri     = "${data.aws_caller_identity.current.account_id}.dkr.ecr.us-east-1.amazonaws.com/titanic-inference-api:latest"
+  # 30s para acomodar Cold Start; 512MB para carregamento do modelo pkl
+  timeout       = 30
+  memory_size   = 512
 
   environment {
     variables = {
