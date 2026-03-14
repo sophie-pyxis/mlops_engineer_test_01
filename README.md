@@ -148,7 +148,7 @@ Documentação completa em `docs/openapi.yaml` (OpenAPI 3.0).
 
 **Base URL:**
 ```
-https://{id}.execute-api.us-east-1.amazonaws.com/v1
+https://ygdrly4f57.execute-api.us-east-1.amazonaws.com/v1
 ```
 
 ### `POST /sobreviventes` — Criar escoragem
