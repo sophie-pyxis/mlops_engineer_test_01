@@ -25,6 +25,28 @@ resource "aws_ecr_repository" "titanic_repo" {
   }
 }
 
+# Remove automaticamente imagens sem tag ao surgir nova versão — evita acúmulo de custo no ECR
+resource "aws_ecr_lifecycle_policy" "titanic_repo_policy" {
+  repository = aws_ecr_repository.titanic_repo.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Remove imagens sem tag ao surgir nova versão"
+        selection = {
+          tagStatus   = "untagged"
+          countType   = "imageCountMoreThan"
+          countNumber = 0
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
+}
+
 # Role assumida pela Lambda durante a execução — trust policy obrigatória
 resource "aws_iam_role" "lambda_exec_role" {
   name = "lambda_mlops_exec_role"
