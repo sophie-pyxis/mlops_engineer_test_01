@@ -69,9 +69,9 @@ A aplicação é organizada em camadas com responsabilidades bem definidas:
 
 ```mermaid
 flowchart TD
-    A[lambda_function.py\nEntry Point] --> B[controller.py\nOrquestra requisições HTTP]
-    B --> C[service.py\nLógica de negócio e inferência]
-    C --> D[repository.py\nAbstração de acesso ao banco]
+    A[lambda_function.py Entry Point] --> B[controller.py Orquestra requisições HTTP]
+    B --> C[service.py Lógica de negócio e inferência]
+    C --> D[repository.py Abstração de acesso ao banco]
     D --> E[(DynamoDB)]
     C --> F[(model.pkl)]
 ```
