@@ -9,10 +9,10 @@ Solução para o desafio técnico de Engenharia de Machine Learning Sênior, imp
 ```mermaid
 flowchart LR
     Client([Client Application])
-    APIGW[API Gateway\nv1/sobreviventes]
-    Lambda[AWS Lambda\ntitanic_inference_api]
-    Model[(model.pkl\nRandomForest)]
-    Dynamo[(DynamoDB\nsobreviventes_titanic)]
+    APIGW[API Gateway]
+    Lambda[AWS Lambda]
+    Model[(model.pkl)]
+    Dynamo[(DynamoDB)]
 
     Client -->|HTTP Request| APIGW
     APIGW -->|Invoke| Lambda
@@ -67,20 +67,27 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    A[lambda_function.py\nEntry Point] --> B[controller.py\nOrquestra requisições HTTP]
-    B --> C[service.py\nLógica de negócio e inferência]
-    C --> D[repository.py\nAbstração de acesso ao banco]
-    D --> E[(DynamoDB)]
-    C --> F[(model.pkl)]
+    A[lambda_function.py]
+    B[controller.py]
+    C[service.py]
+    D[repository.py]
+    E[(DynamoDB)]
+    F[(model.pkl)]
+
+    A -->|Entry Point| B
+    B -->|Orquestra HTTP| C
+    C -->|Inferência| F
+    C -->|Negócio| D
+    D -->|Persistência| E
 ```
 
-| Camada      | Arquivo              | Responsabilidade                       |
-|-------------|----------------------|----------------------------------------|
-| Entry Point | `lambda_function.py` | Handler da Lambda, roteamento inicial  |
-| Controller  | `controller.py`      | Orquestra requisições HTTP             |
-| Service     | `service.py`         | Executa inferência com o modelo pkl    |
-| Repository  | `repository.py`      | Abstrai acesso ao DynamoDB             |
-| Database    | DynamoDB             | Persistência de dados                  |
+| Camada      | Arquivo              | Responsabilidade                      |
+|-------------|----------------------|---------------------------------------|
+| Entry Point | `lambda_function.py` | Handler da Lambda, roteamento inicial |
+| Controller  | `controller.py`      | Orquestra requisições HTTP            |
+| Service     | `service.py`         | Executa inferência com o modelo pkl   |
+| Repository  | `repository.py`      | Abstrai acesso ao DynamoDB            |
+| Database    | DynamoDB             | Persistência de dados                 |
 
 ---
 
@@ -94,16 +101,16 @@ O modelo foi treinado no notebook `treinamento.ipynb` usando o dataset público 
 
 **Features de entrada (ordem obrigatória no array):**
 
-| Posição | Feature       | Descrição                         | Valores                          |
-|---------|---------------|-----------------------------------|----------------------------------|
-| 0       | `Age`         | Idade do passageiro               | número decimal (ex: `22.0`)      |
-| 1       | `Parch`       | Pais/filhos a bordo               | inteiro (ex: `0`)                |
-| 2       | `SibSp`       | Irmãos/cônjuge a bordo            | inteiro (ex: `1`)                |
-| 3       | `Fare`        | Valor da passagem                 | número decimal (ex: `7.25`)      |
-| 4       | `Pclass`      | Classe da cabine                  | `1`, `2` ou `3`                  |
-| 5       | `Sex_male`    | Sexo                              | `1` = masculino, `0` = feminino  |
-| 6       | `Embarked_Q`  | Embarcou em Queenstown            | `1` = sim, `0` = não             |
-| 7       | `Embarked_S`  | Embarcou em Southampton           | `1` = sim, `0` = não             |
+| Posição | Feature      | Descrição                | Valores                         |
+|---------|--------------|--------------------------|---------------------------------|
+| 0       | `Age`        | Idade do passageiro      | número decimal (ex: `22.0`)     |
+| 1       | `Parch`      | Pais/filhos a bordo      | inteiro (ex: `0`)               |
+| 2       | `SibSp`      | Irmãos/cônjuge a bordo   | inteiro (ex: `1`)               |
+| 3       | `Fare`       | Valor da passagem        | número decimal (ex: `7.25`)     |
+| 4       | `Pclass`     | Classe da cabine         | `1`, `2` ou `3`                 |
+| 5       | `Sex_male`   | Sexo                     | `1` = masculino, `0` = feminino |
+| 6       | `Embarked_Q` | Embarcou em Queenstown   | `1` = sim, `0` = não            |
+| 7       | `Embarked_S` | Embarcou em Southampton  | `1` = sim, `0` = não            |
 
 > Se o passageiro embarcou em Cherbourg, `Embarked_Q = 0` e `Embarked_S = 0`.
 
@@ -170,12 +177,20 @@ A infraestrutura é provisionada automaticamente via **Terraform** (`infra/main.
 
 ```mermaid
 flowchart LR
-    Push([git push\nmaster]) --> GHA[GitHub Actions]
-    GHA --> Test[pytest\nPYTHONPATH=src]
-    Test --> Creds[Configurar\nCredenciais AWS]
-    Creds --> TFInit[terraform init\n+ import]
-    TFInit --> TFApply[terraform\napply]
-    TFApply --> Deploy([API no ar])
+    Push([git push master])
+    GHA[GitHub Actions]
+    Test[pytest]
+    Creds[Credenciais AWS]
+    TFInit[terraform init e import]
+    TFApply[terraform apply]
+    Deploy([API no ar])
+
+    Push --> GHA
+    GHA --> Test
+    Test --> Creds
+    Creds --> TFInit
+    TFInit --> TFApply
+    TFApply --> Deploy
 ```
 
 Pipeline configurado em `.github/workflows/deploy.yml`. O deploy só é executado se todos os testes passarem.
@@ -201,6 +216,8 @@ cd infra
 terraform init
 terraform import aws_dynamodb_table.titanic_table sobreviventes_titanic || true
 terraform import aws_iam_role.lambda_exec_role lambda_mlops_exec_role || true
+terraform import aws_iam_policy.lambda_policy arn:aws:iam::{account_id}:policy/lambda_mlops_policy || true
+terraform import aws_lambda_function.titanic_ml titanic_inference_api || true
 terraform apply -auto-approve
 ```
 
@@ -208,16 +225,16 @@ terraform apply -auto-approve
 
 ## Tecnologias Utilizadas
 
-| Categoria        | Tecnologia       |
-|------------------|------------------|
-| Linguagem        | Python 3.9       |
-| ML Framework     | Scikit-learn     |
-| Compute          | AWS Lambda       |
-| API              | AWS API Gateway  |
-| Banco de Dados   | AWS DynamoDB     |
-| IaC              | Terraform        |
-| CI/CD            | GitHub Actions   |
-| Documentação API | OpenAPI 3.0      |
+| Categoria        | Tecnologia      |
+|------------------|-----------------|
+| Linguagem        | Python 3.9      |
+| ML Framework     | Scikit-learn    |
+| Compute          | AWS Lambda      |
+| API              | AWS API Gateway |
+| Banco de Dados   | AWS DynamoDB    |
+| IaC              | Terraform       |
+| CI/CD            | GitHub Actions  |
+| Documentação API | OpenAPI 3.0     |
 
 ---
 
