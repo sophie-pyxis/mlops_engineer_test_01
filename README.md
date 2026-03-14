@@ -217,3 +217,9 @@ A solução foi projetada priorizando:
 - Monitoramento de drift do modelo
 - Versionamento de modelos com **S3 + MLflow**
 - Pipeline completo de **MLOps** com retreino automático
+
+---
+
+## Autoria
+
+Desenvolvido por **Sophie Pyxis de Paula** (sophie-pyxis).
