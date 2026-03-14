@@ -222,4 +222,4 @@ A solução foi projetada priorizando:
 
 ## Autoria
 
-Desenvolvido por **Sophie Pyxis de Paula** (sophie-pyxis).
+Desenvolvido por **Sophie Pyxis de Paula** (sophie-pyxis)
