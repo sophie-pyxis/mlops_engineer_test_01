@@ -45,13 +45,14 @@ jobs:
           aws ecr get-login-password --region us-east-1 | \
             docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com
 
-          LOCAL_HASH=$(cat src/requirements.txt Dockerfile | md5sum | cut -d' ' -f1)
+          # Hash cobre dependências, Dockerfile e todo o código Python — qualquer mudança dispara rebuild
+          LOCAL_HASH=$(cat src/requirements.txt Dockerfile src/*.py | md5sum | cut -d' ' -f1)
           REMOTE_HASH=$(aws ecr list-tags-for-resource \
             --resource-arn arn:aws:ecr:us-east-1:${AWS_ACCOUNT_ID}:repository/titanic-inference-api \
             --query "tags[?Key=='build-hash'].Value" --output text 2>/dev/null || echo "")
 
           if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
-            echo "Imagem desatualizada — realizando novo build..."
+            echo "Alterações detectadas — realizando novo build..."
             docker build -t ${ECR_URI}:latest .
             docker push ${ECR_URI}:latest
             aws ecr tag-resource \
@@ -59,7 +60,7 @@ jobs:
               --tags Key=build-hash,Value=${LOCAL_HASH}
             echo "Nova imagem publicada no ECR."
           else
-            echo "Imagem sem alterações — reutilizando imagem existente no ECR."
+            echo "Sem alterações — reutilizando imagem existente no ECR."
           fi
 
       - name: Setup Terraform
