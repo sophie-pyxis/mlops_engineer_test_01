@@ -210,25 +210,28 @@ flowchart LR
     Push([git push master])
     GHA[GitHub Actions]
     Test[pytest]
-    Check{Imagem mudou?}
+    Delete[Deleta Lambda e ECR]
     Build[docker build e push ECR]
-    Skip[Reutiliza imagem ECR]
     TF[terraform init e import]
     Apply[terraform apply]
     Deploy([API no ar])
 
     Push --> GHA
     GHA --> Test
-    Test --> Check
-    Check -->|sim| Build
-    Check -->|não| Skip
+    Test --> Delete
+    Delete --> Build
     Build --> TF
-    Skip --> TF
     TF --> Apply
     Apply --> Deploy
 ```
 
-O pipeline só executa o deploy se todos os testes passarem. A imagem Docker é reconstruída apenas quando `requirements.txt` ou `Dockerfile` são alterados — o hash MD5 combinado é comparado com a tag `build-hash` armazenada no ECR.
+**Estratégia de deploy:**
+
+A cada execução do pipeline, Lambda e ECR são **deletados e recriados do zero**. Essa abordagem elimina conflitos de estado entre execuções do runner efêmero do GitHub Actions, que descarta o `terraform.tfstate` ao final de cada job.
+
+Os recursos que não mudam entre deploys — DynamoDB, IAM Role e IAM Policy — são importados para o estado do Terraform. O **API Gateway é preservado** via import para manter o endpoint fixo entre deploys.
+
+> A solução definitiva para o problema de estado seria um backend remoto com S3 + DynamoDB lock, eliminando todos os imports e a necessidade de deletar recursos. Isso está previsto como evolução futura.
 
 ---
 
@@ -244,16 +247,14 @@ Os testes utilizam `MagicMock` para simular o modelo e o DynamoDB — nenhuma ch
 
 ---
 
-## Deploy
+## Deploy Manual
 
 ```bash
 cd infra
 terraform init
-terraform import aws_ecr_repository.titanic_repo titanic-inference-api || true
 terraform import aws_dynamodb_table.titanic_table sobreviventes_titanic || true
 terraform import aws_iam_role.lambda_exec_role lambda_mlops_exec_role || true
 terraform import aws_iam_policy.lambda_policy arn:aws:iam::{account_id}:policy/lambda_mlops_policy || true
-terraform import aws_lambda_function.titanic_ml titanic_inference_api || true
 terraform apply -auto-approve
 ```
 
@@ -281,11 +282,11 @@ A solução foi construída de forma incremental, com cada decisão técnica res
 
 A arquitetura inicial seguiu o caminho mais direto: Lambda com pacote ZIP, Terraform provisionando os recursos e GitHub Actions orquestrando o pipeline. O código foi estruturado em Clean Architecture desde o início — Controller, Service e Repository — tanto para atender boas práticas quanto para viabilizar testes unitários com mocks sem dependências reais da AWS.
 
-O primeiro obstáculo foi de tamanho: o pacote com `scikit-learn`, `scipy` e `numpy` ultrapassa 50MB no upload direto e 250MB descompactado, invalidando tanto o ZIP quanto o Lambda Layer. A solução foi migrar para **Container Image via ECR**, que suporta até 10GB e é a abordagem recomendada pela AWS para workloads de ML — mantendo todo o código em Python, como exigido.
+O primeiro obstáculo foi de tamanho: o pacote com `scikit-learn`, `scipy` e `numpy` ultrapassa 50MB no upload direto e 250MB descompactado, invalidando tanto o ZIP quanto o Lambda Layer. A solução foi migrar para **Container Image via ECR**, que suporta até 10GB e é a abordagem recomendada pela AWS para workloads de ML.
 
-O segundo desafio foi de estado: o runner efêmero do GitHub Actions descarta o `terraform.tfstate` a cada execução. Sem estado persistido, o Terraform tentava recriar recursos já existentes e falhava com conflitos. A solução adotada foi importar os recursos existentes dinamicamente antes de cada `apply`, usando a AWS CLI para resolver IDs em tempo de execução — uma abordagem pragmática que funciona sem a complexidade de um backend remoto com S3.
+O segundo desafio foi de estado: o runner efêmero do GitHub Actions descarta o `terraform.tfstate` a cada execução. A abordagem inicial de importar os recursos dinamicamente antes de cada `apply` resolveu parcialmente o problema, mas se mostrou frágil — recursos como Lambda e ECR falhavam silenciosamente no import e causavam conflitos. A solução adotada foi mais direta: **deletar e recriar Lambda e ECR a cada deploy**, preservando apenas o API Gateway para manter o endpoint fixo.
 
-A política IAM foi construída de forma iterativa e orientada a erros reais de `AccessDeniedException`, chegando a um conjunto preciso de permissões que aplica o Privilégio Mínimo sem bloquear operações legítimas do Terraform.
+Ao longo do processo foram corrigidos bugs de compatibilidade do `model.pkl` com a versão do Scikit-learn, erro de indexação no `predict_proba`, e incompatibilidade de tipos float com o DynamoDB. A política IAM foi construída de forma iterativa e orientada a erros reais de `AccessDeniedException`.
 
 Ao final, a solução entrega uma API serverless completamente funcional, com infraestrutura reproduzível, pipeline automatizado, testes isolados e custo operacional próximo de zero para o volume de uso do desafio.
 

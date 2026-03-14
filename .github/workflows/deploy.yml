@@ -81,10 +81,7 @@ jobs:
           if [ -n "$API_ID" ]; then
             terraform import aws_api_gateway_rest_api.titanic_api $API_ID || true
             terraform import aws_api_gateway_stage.api_stage ${API_ID}/v1 || true
-            STATEMENT_ID=$(aws lambda get-policy --function-name titanic_inference_api --query 'Policy' --output text | python3 -c "import json,sys; p=json.load(sys.stdin); print(p['Statement'][0]['Sid'])" 2>/dev/null)
-            if [ -n "$STATEMENT_ID" ]; then
-              terraform import aws_lambda_permission.apigw_invoke_permission titanic_inference_api/$STATEMENT_ID || true
-            fi
           fi
 
+          # Lambda foi recriada — aws_lambda_permission será criada pelo Terraform
           terraform apply -auto-approve
