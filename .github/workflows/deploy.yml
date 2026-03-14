@@ -42,11 +42,9 @@ jobs:
         run: |
           ECR_URI=${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/titanic-inference-api
 
-          # Autentica o Docker no ECR
           aws ecr get-login-password --region us-east-1 | \
             docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com
 
-          # Verifica se já existe imagem com o mesmo hash de código e requirements
           LOCAL_HASH=$(cat src/requirements.txt Dockerfile | md5sum | cut -d' ' -f1)
           REMOTE_HASH=$(aws ecr list-tags-for-resource \
             --resource-arn arn:aws:ecr:us-east-1:${AWS_ACCOUNT_ID}:repository/titanic-inference-api \
@@ -56,8 +54,6 @@ jobs:
             echo "Imagem desatualizada — realizando novo build..."
             docker build -t ${ECR_URI}:latest .
             docker push ${ECR_URI}:latest
-
-            # Atualiza a tag de hash no repositório ECR para cache na próxima execução
             aws ecr tag-resource \
               --resource-arn arn:aws:ecr:us-east-1:${AWS_ACCOUNT_ID}:repository/titanic-inference-api \
               --tags Key=build-hash,Value=${LOCAL_HASH}
@@ -76,11 +72,11 @@ jobs:
         run: |
           terraform init
 
+          terraform import aws_ecr_repository.titanic_repo titanic-inference-api || true
           terraform import aws_dynamodb_table.titanic_table sobreviventes_titanic || true
           terraform import aws_iam_role.lambda_exec_role lambda_mlops_exec_role || true
           terraform import aws_iam_policy.lambda_policy arn:aws:iam::${AWS_ACCOUNT_ID}:policy/lambda_mlops_policy || true
           terraform import aws_lambda_function.titanic_ml titanic_inference_api || true
-          terraform import aws_ecr_repository.titanic_repo titanic-inference-api || true
 
           API_ID=$(aws apigateway get-rest-apis --query "items[?name=='titanic-ml-api'].id" --output text)
           if [ -n "$API_ID" ]; then
