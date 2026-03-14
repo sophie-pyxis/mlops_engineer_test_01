@@ -45,8 +45,11 @@ jobs:
           aws ecr get-login-password --region us-east-1 | \
             docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com
 
-          # Hash cobre dependências, Dockerfile e todo o código Python — qualquer mudança dispara rebuild
-          LOCAL_HASH=$(cat src/requirements.txt Dockerfile src/*.py | md5sum | cut -d' ' -f1)
+          # find com sort garante ordem determinística — evita falsos rebuilds por variação de glob
+          # Inclui apenas arquivos .py para excluir binários como model.pkl
+          LOCAL_HASH=$(cat Dockerfile src/requirements.txt \
+            $(find src -name "*.py" | sort) | md5sum | cut -d' ' -f1)
+
           REMOTE_HASH=$(aws ecr list-tags-for-resource \
             --resource-arn arn:aws:ecr:us-east-1:${AWS_ACCOUNT_ID}:repository/titanic-inference-api \
             --query "tags[?Key=='build-hash'].Value" --output text 2>/dev/null || echo "")
