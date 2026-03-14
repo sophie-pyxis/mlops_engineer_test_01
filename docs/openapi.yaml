@@ -1,0 +1,101 @@
+openapi: 3.0.1
+info:
+  title: API MLOps Escoragem Titanic
+  description: API Serverless para inferência do modelo do Titanic (Desafio Técnico Itaú)
+  version: 1.0.0
+paths:
+  /sobreviventes:
+    post:
+      summary: Realiza a escoragem de um passageiro
+      description: Recebe um array de características do passageiro, aciona o modelo de Machine Learning e salva o resultado.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                caracteristicas:
+                  type: array
+                  description: Array numérico com as features necessárias para o Scikit-Learn.
+                  items:
+                    type: number
+      responses:
+        '201':
+          description: Escoragem computada e salva com sucesso
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  probabilidade_sobrevivencia:
+                    type: number
+                    format: float
+        '400':
+          description: Payload inválido ou ausente
+      # Integração nativa do API Gateway com a AWS Lambda (AWS Proxy)
+      x-amazon-apigateway-integration:
+        uri: "${lambda_invoke_arn}"
+        passthroughBehavior: "when_no_match"
+        httpMethod: "POST"
+        type: "aws_proxy"
+        
+    get:
+      summary: Lista todos os passageiros processados
+      description: Retorna a lista completa de predições salvas no banco de dados.
+      responses:
+        '200':
+          description: Lista retornada com sucesso
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+      x-amazon-apigateway-integration:
+        uri: "${lambda_invoke_arn}"
+        passthroughBehavior: "when_no_match"
+        httpMethod: "POST"
+        type: "aws_proxy"
+
+  /sobreviventes/{id}:
+    get:
+      summary: Retorna a predição de um ID específico
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID do passageiro gerado no momento do POST.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Passageiro localizado com sucesso
+        '404':
+          description: Passageiro não encontrado na base de dados
+      x-amazon-apigateway-integration:
+        uri: "${lambda_invoke_arn}"
+        passthroughBehavior: "when_no_match"
+        httpMethod: "POST"
+        type: "aws_proxy"
+        
+    delete:
+      summary: Remove um passageiro da base
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: UUID do passageiro que será excluído.
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Passageiro removido com sucesso (Sem conteúdo no corpo da resposta)
+      x-amazon-apigateway-integration:
+        uri: "${lambda_invoke_arn}"
+        passthroughBehavior: "when_no_match"
+        httpMethod: "POST"
+        type: "aws_proxy"

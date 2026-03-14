@@ -1,20 +1,225 @@
-# Case Seleção
+# Desafio Técnico — Engenharia de Machine Learning Sênior
 
-## Software Engineer Python - AWS
+Solução para o desafio técnico de Engenharia de Machine Learning Sênior, implementando uma **API Serverless de inferência de Machine Learning** com **AWS Lambda, API Gateway, DynamoDB e Terraform**, seguindo boas práticas de **Clean Architecture, SOLID e MLOps**.
 
-### Tarefas
+---
 
-1. Criar um repositório no Github que deve conter todos com os códigos do case;
-2. Criar o código que sobe uma API usando IaC (com Terraform, por exemplo), preferencialmente usando o serviço API Gateway da Cloud AWS:
-   - O contrato deve ser especificado usando o OpenAPI 3.0 (Swagger)
-   - Deve expor um endpoint com um recurso */sobreviventes* que recebe um JSON com um array de características necessárias para escorar o modelo de Machine Learning treinado em cima do Dataset do Titanic. O modelo é disponibilizado neste repositório na seguinte *path*: */modelo/model.pkl*;
-   - O método POST deve receber um JSON no body com um array de características e retornar um JSON com a probabilidade de sobrevivência do passageiro, junto com o ID do passageiro;
-     - O processamento - escoragem - deve ser feita numa função Lambda **com código escrito em Python**, e caso seja escolhido outro serviço AWS, justificar a escolha;
-     - Além disso, a probabilidade de sobrevivência pode ser armazenada em um banco de dados de baixa latência e serverless - DynamoDB;
-     - O Banco de Dados e a função Lambda devem ser criados usando IaC com Terraform, por exemplo;
-     - **Não provisionar o banco DynamoDB, dado o baixo volume de requisições que serão feitas;**
-   - O método GET /sobreviventes deve retornar um JSON com a lista de passageiros que já foram avaliados (fica a critério do candidato implementar paginação ou não);
-   - O método GET /sobreviventes/{id} deve retornar um JSON com a probabilidade de sobrevivência do passageiro com o ID informado;
-   - O método DELETE deve deletar o passageiro com o ID informado;
-3. Disponibilizar os arquivos de IaC (Terraform) no repositório, assim como o contrato OpenAPI e o código da função Lambda;
-4. Você possui o prazo de 7 dias corridos para entrega do case, uma vez recebido o link para este repositório;
+## Arquitetura da Solução
+
+```mermaid
+flowchart LR
+    Client([Client Application])
+    APIGW[API Gateway]
+    Lambda[AWS Lambda Inference API]
+    Model[(model.pkl Scikit-learn)]
+    Dynamo[(DynamoDB)]
+
+    Client -->|HTTP Request| APIGW
+    APIGW -->|Invoke| Lambda
+    Lambda -->|Load & Predict| Model
+    Lambda -->|Persist Result| Dynamo
+    Dynamo -->|Return Data| Lambda
+    Lambda -->|HTTP Response| APIGW
+    APIGW -->|HTTP Response| Client
+```
+
+**Fluxo da aplicação:**
+
+1. O cliente envia uma requisição HTTP para a API.
+2. O **API Gateway** encaminha a requisição para a **AWS Lambda**.
+3. A Lambda carrega o modelo e executa a inferência.
+4. O resultado é persistido no **DynamoDB**.
+5. A resposta é retornada ao cliente.
+
+---
+
+## Estrutura do Repositório
+
+```
+.
+├── .github/
+│   └── workflows/
+│       └── deploy.yml
+├── infra/
+│   └── main.tf
+├── docs/
+│   └── openapi.yaml
+├── src/
+│   ├── lambda_function.py
+│   ├── controller.py
+│   ├── service.py
+│   ├── repository.py
+│   ├── schemas.py
+│   ├── requirements.txt
+│   └── modelo/
+│       ├── treinamento.ipynb
+│       └── model.pkl
+├── tests/
+│   └── test_api.py
+└── README.md
+```
+
+---
+
+## Princípios de Arquitetura
+
+### Clean Architecture
+
+A aplicação é organizada em camadas com responsabilidades bem definidas:
+
+```mermaid
+flowchart TD
+    A[lambda_function.py Entry Point] --> B[controller.py Orquestra requisições HTTP]
+    B --> C[service.py Lógica de negócio e inferência]
+    C --> D[repository.py Abstração de acesso ao banco]
+    D --> E[(DynamoDB)]
+    C --> F[(model.pkl)]
+```
+
+| Camada       | Arquivo               | Responsabilidade                        |
+|--------------|-----------------------|-----------------------------------------|
+| Entry Point  | `lambda_function.py`  | Handler da Lambda, roteamento inicial   |
+| Controller   | `controller.py`       | Orquestra requisições HTTP              |
+| Service      | `service.py`          | Executa lógica de negócio e inferência  |
+| Repository   | `repository.py`       | Abstrai acesso ao banco de dados        |
+| Database     | DynamoDB              | Persistência de dados                   |
+
+---
+
+## Infraestrutura como Código (Terraform)
+
+A infraestrutura é provisionada automaticamente via **Terraform** (`infra/main.tf`).
+
+**Recursos provisionados:**
+
+| Recurso Terraform            | Descrição                         |
+|------------------------------|-----------------------------------|
+| `aws_lambda_function`        | Função de inferência              |
+| `aws_api_gateway_rest_api`   | Gateway de entrada HTTP           |
+| `aws_dynamodb_table`         | Tabela de resultados (On-Demand)  |
+| `aws_iam_role`               | Permissões de execução            |
+
+> O DynamoDB utiliza **modo On-Demand** para eliminar o provisionamento manual de capacidade.
+
+---
+
+## Especificação da API
+
+Documentação completa em `docs/openapi.yaml` (OpenAPI 3.0).
+
+### `POST /sobreviventes` — Criar escoragem
+
+**Request:**
+```json
+{
+  "caracteristicas": [1, 0, 22, 1, 0, 7.25]
+}
+```
+
+**Response:**
+```json
+{
+  "id": "uuid",
+  "probabilidade_sobrevivencia": 0.87
+}
+```
+
+### `GET /sobreviventes` — Listar passageiros
+
+### `GET /sobreviventes/{id}` — Buscar passageiro por ID
+
+### `DELETE /sobreviventes/{id}` — Remover passageiro
+
+---
+
+## Modelo de Machine Learning
+
+O modelo foi treinado no notebook `treinamento.ipynb` com **Scikit-learn** e serializado via **Pickle**.
+
+```
+src/modelo/model.pkl
+```
+
+O modelo é carregado pela Lambda no momento da execução para realizar inferência sobre as características do passageiro.
+
+---
+
+## Pipeline CI/CD
+
+```mermaid
+flowchart LR
+    Push([git push]) --> GHA[GitHub Actions]
+    GHA --> Build[Build Lambda Package]
+    Build --> Test[pytest]
+    Test --> TF[terraform apply]
+    TF --> Deploy([Deploy na AWS])
+```
+
+Pipeline configurado em `.github/workflows/deploy.yml`.
+
+---
+
+## Testes
+
+```bash
+# Instalar dependências
+pip install -r src/requirements.txt
+
+# Executar testes
+pytest tests/
+```
+
+---
+
+## Deploy da Infraestrutura
+
+```bash
+# Inicializar Terraform
+terraform init
+
+# Revisar plano de execução
+terraform plan
+
+# Aplicar infraestrutura
+terraform apply
+```
+
+---
+
+## Tecnologias Utilizadas
+
+| Categoria        | Tecnologia                          |
+|------------------|-------------------------------------|
+| Linguagem        | Python                              |
+| ML Framework     | Scikit-learn                        |
+| Compute          | AWS Lambda                          |
+| API              | AWS API Gateway                     |
+| Banco de Dados   | AWS DynamoDB                        |
+| IaC              | Terraform                           |
+| CI/CD            | GitHub Actions                      |
+| Documentação API | OpenAPI 3.0                         |
+
+---
+
+## Considerações de Engenharia
+
+A solução foi projetada priorizando:
+
+- **Serverless** — sem gerenciamento de servidores
+- **Escalabilidade automática** — Lambda e DynamoDB On-Demand
+- **Baixo custo operacional** — pagamento por uso
+- **Reprodutibilidade** — infraestrutura 100% em código
+- **Separação de responsabilidades** — Clean Architecture
+
+### Evoluções Previstas
+
+- Observabilidade com **CloudWatch** e alertas
+- Monitoramento de drift do modelo
+- Versionamento de modelos com **S3 + MLflow**
+- Pipeline completo de **MLOps** com retreino automático
+
+---
+
+## Autoria
+
+Desenvolvido por **Sophie Pyxis de Paula** (sophie-pyxis)
