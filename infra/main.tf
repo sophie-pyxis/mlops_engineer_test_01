@@ -25,7 +25,7 @@ resource "aws_ecr_repository" "titanic_repo" {
   }
 }
 
-# Remove automaticamente imagens sem tag ao surgir nova versão — evita acúmulo de custo no ECR
+# Remove imagens sem tag com mais de 1 dia — evita acúmulo de custo no ECR
 resource "aws_ecr_lifecycle_policy" "titanic_repo_policy" {
   repository = aws_ecr_repository.titanic_repo.name
 
@@ -33,11 +33,12 @@ resource "aws_ecr_lifecycle_policy" "titanic_repo_policy" {
     rules = [
       {
         rulePriority = 1
-        description  = "Remove imagens sem tag ao surgir nova versão"
+        description  = "Remove imagens sem tag após 1 dia"
         selection = {
           tagStatus   = "untagged"
-          countType   = "imageCountMoreThan"
-          countNumber = 0
+          countType   = "sinceImagePushed"
+          countNumber = 1
+          countUnit   = "days"
         }
         action = {
           type = "expire"

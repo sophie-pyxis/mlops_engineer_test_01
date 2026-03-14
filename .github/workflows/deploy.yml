@@ -73,6 +73,7 @@ jobs:
           terraform init
 
           terraform import aws_ecr_repository.titanic_repo titanic-inference-api || true
+          terraform import aws_ecr_lifecycle_policy.titanic_repo_policy titanic-inference-api || true
           terraform import aws_dynamodb_table.titanic_table sobreviventes_titanic || true
           terraform import aws_iam_role.lambda_exec_role lambda_mlops_exec_role || true
           terraform import aws_iam_policy.lambda_policy arn:aws:iam::${AWS_ACCOUNT_ID}:policy/lambda_mlops_policy || true
