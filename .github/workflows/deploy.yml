@@ -24,14 +24,6 @@ jobs:
           pip install pytest
           PYTHONPATH=src pytest tests/test_api.py
 
-      - name: Instalar dependências no pacote Lambda
-        run: |
-          pip install -r src/requirements.txt --target src/
-
-      - name: Empacotar Lambda
-        run: |
-          cd src && zip -r ../infra/lambda.zip . && cd ..
-
       - name: Configurar Credenciais AWS
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -39,9 +31,31 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
-      - name: Criar bucket S3 e fazer upload do pacote
+      - name: Criar bucket S3 se não existir
         run: |
           aws s3api create-bucket --bucket mlops-test-itau --region us-east-1 || true
+
+      - name: Verificar e atualizar Layer de dependências no S3
+        run: |
+          LOCAL_HASH=$(md5sum src/requirements.txt | cut -d' ' -f1)
+          REMOTE_HASH=$(aws s3 cp s3://mlops-test-itau/layer-hash.txt - 2>/dev/null || echo "")
+
+          if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
+            echo "Dependências alteradas — reconstruindo Layer..."
+            mkdir -p layer/python
+            pip install -r src/requirements.txt --target layer/python/
+            cd layer && zip -r ../infra/layer.zip . && cd ..
+            aws s3 cp infra/layer.zip s3://mlops-test-itau/layer.zip
+            echo "$LOCAL_HASH" | aws s3 cp - s3://mlops-test-itau/layer-hash.txt
+            echo "Layer atualizado no S3."
+          else
+            echo "Dependências sem alteração — reutilizando Layer existente no S3."
+            aws s3 cp s3://mlops-test-itau/layer.zip infra/layer.zip
+          fi
+
+      - name: Empacotar código Lambda
+        run: |
+          cd src && zip -r ../infra/lambda.zip . --exclude "*.pyc" --exclude "__pycache__/*" && cd ..
           aws s3 cp infra/lambda.zip s3://mlops-test-itau/lambda.zip
 
       - name: Setup Terraform

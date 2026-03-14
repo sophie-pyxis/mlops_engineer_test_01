@@ -64,7 +64,18 @@ resource "aws_iam_role_policy_attachment" "lambda_attach" {
   policy_arn = aws_iam_policy.lambda_policy.arn
 }
 
-# Pacote Lambda lido do S3 — necessário pois o ZIP com dependências ultrapassa 50MB
+# Layer com dependências pesadas (scikit-learn, scipy, numpy, boto3)
+# Separado do código para contornar o limite de 250MB descompactado da Lambda
+# O pipeline só reconstrói e faz upload do layer.zip quando requirements.txt muda
+resource "aws_lambda_layer_version" "dependencies" {
+  layer_name          = "titanic-ml-dependencies"
+  s3_bucket           = "mlops-test-itau"
+  s3_key              = "layer.zip"
+  source_code_hash    = filebase64sha256("${path.module}/layer.zip")
+  compatible_runtimes = ["python3.9"]
+}
+
+# Função Lambda lendo apenas o código-fonte do S3 — dependências via Layer
 resource "aws_lambda_function" "titanic_ml" {
   s3_bucket        = "mlops-test-itau"
   s3_key           = "lambda.zip"
@@ -76,6 +87,7 @@ resource "aws_lambda_function" "titanic_ml" {
   # 30s para acomodar Cold Start do Scikit-Learn; 512MB para carregamento do modelo pkl
   timeout          = 30
   memory_size      = 512
+  layers           = [aws_lambda_layer_version.dependencies.arn]
 
   environment {
     variables = {

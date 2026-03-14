@@ -11,6 +11,7 @@ flowchart LR
     Client([Client Application])
     APIGW[API Gateway]
     Lambda[AWS Lambda]
+    Layer[Lambda Layer]
     Model[(model.pkl)]
     Dynamo[(DynamoDB)]
     S3[(S3 Bucket)]
@@ -23,17 +24,19 @@ flowchart LR
     Lambda -->|HTTP Response| APIGW
     APIGW -->|HTTP Response| Client
     S3 -->|lambda.zip| Lambda
+    S3 -->|layer.zip| Layer
+    Layer -->|scikit-learn / boto3| Lambda
 ```
 
 **Fluxo da aplicação:**
 
 1. O cliente envia uma requisição HTTP para o API Gateway.
 2. O API Gateway roteia a chamada para a função AWS Lambda.
-3. A Lambda carrega o modelo RandomForest e executa a inferência.
+3. A Lambda carrega o modelo RandomForest via Lambda Layer e executa a inferência.
 4. O resultado é persistido no DynamoDB.
 5. A resposta é retornada ao cliente com o ID e a probabilidade de sobrevivência.
 
-> O bucket S3 `mlops-test-itau` é utilizado como intermediário no deploy — o pacote Lambda ultrapassa o limite de 50MB de upload direto devido às dependências do Scikit-learn.
+> As dependências (`scikit-learn`, `scipy`, `numpy`, `boto3`) são empacotadas em um **Lambda Layer** separado para contornar o limite de 250MB descompactado da Lambda. O pipeline só reconstrói o layer quando `requirements.txt` é alterado.
 
 ---
 
@@ -165,17 +168,18 @@ https://{id}.execute-api.us-east-1.amazonaws.com/v1
 
 A infraestrutura é provisionada automaticamente via **Terraform** (`infra/main.tf`).
 
-| Recurso Terraform              | Descrição                                        |
-|--------------------------------|--------------------------------------------------|
-| `aws_dynamodb_table`           | Tabela On-Demand — sem provisionamento manual    |
-| `aws_lambda_function`          | Função de inferência (Python 3.9) via S3         |
-| `aws_api_gateway_rest_api`     | Gateway provisionado via contrato OpenAPI        |
-| `aws_iam_role`                 | Execution role da Lambda                         |
-| `aws_iam_policy`               | Política de privilégio mínimo                    |
-| `aws_iam_role_policy_attachment` | Vincula a política à role                      |
-| `aws_lambda_permission`        | Autoriza o API Gateway invocar a Lambda          |
-| `aws_api_gateway_deployment`   | Publicação do estado atual da API                |
-| `aws_api_gateway_stage`        | Stage `v1` da API                                |
+| Recurso Terraform                | Descrição                                     |
+|----------------------------------|-----------------------------------------------|
+| `aws_dynamodb_table`             | Tabela On-Demand — sem provisionamento manual |
+| `aws_lambda_layer_version`       | Layer com dependências Python (via S3)        |
+| `aws_lambda_function`            | Função de inferência — código apenas          |
+| `aws_api_gateway_rest_api`       | Gateway provisionado via contrato OpenAPI     |
+| `aws_iam_role`                   | Execution role da Lambda                      |
+| `aws_iam_policy`                 | Política de privilégio mínimo                 |
+| `aws_iam_role_policy_attachment` | Vincula a política à role                     |
+| `aws_lambda_permission`          | Autoriza o API Gateway invocar a Lambda       |
+| `aws_api_gateway_deployment`     | Publicação do estado atual da API             |
+| `aws_api_gateway_stage`          | Stage `v1` da API                             |
 
 ---
 
@@ -186,28 +190,29 @@ flowchart LR
     Push([git push master])
     GHA[GitHub Actions]
     Test[pytest]
-    Pkg[Empacotar Lambda]
-    S3[Upload para S3]
-    Creds[Credenciais AWS]
+    S3Check{Layer mudou?}
+    BuildLayer[Rebuild layer.zip]
+    SkipLayer[Reutiliza layer.zip]
+    Pkg[Empacota lambda.zip]
     TF[terraform init e import]
     Apply[terraform apply]
     Deploy([API no ar])
 
     Push --> GHA
     GHA --> Test
-    Test --> Pkg
-    Pkg --> Creds
-    Creds --> S3
-    S3 --> TF
+    Test --> S3Check
+    S3Check -->|sim| BuildLayer
+    S3Check -->|não| SkipLayer
+    BuildLayer --> Pkg
+    SkipLayer --> Pkg
+    Pkg --> TF
     TF --> Apply
     Apply --> Deploy
 ```
 
-**Detalhe do empacotamento:**
+**Lógica de cache do Layer:**
 
-Como o pacote com dependências (`scikit-learn`, `scipy`, `numpy`) ultrapassa 70MB, o deploy é feito via S3. O pipeline instala as dependências dentro de `src/`, compacta em `lambda.zip` e faz o upload para o bucket `mlops-test-itau` antes do Terraform.
-
-O Terraform lê o ZIP diretamente do S3 ao provisionar ou atualizar a função Lambda.
+O pipeline computa o MD5 do `requirements.txt` e compara com o hash armazenado em `s3://mlops-test-itau/layer-hash.txt`. Se houver diferença, o `layer.zip` é reconstruído e o hash atualizado. Caso contrário, o layer existente é reutilizado, economizando tempo e largura de banda.
 
 ---
 
