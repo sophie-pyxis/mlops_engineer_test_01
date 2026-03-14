@@ -10,8 +10,8 @@ Solução para o desafio técnico de Engenharia de Machine Learning Sênior, imp
 flowchart LR
     Client([Client Application])
     APIGW[API Gateway]
-    Lambda[AWS Lambda\nInference API]
-    Model[(model.pkl\nScikit-learn)]
+    Lambda[AWS Lambda Inference API]
+    Model[(model.pkl Scikit-learn)]
     Dynamo[(DynamoDB)]
 
     Client -->|HTTP Request| APIGW
@@ -52,10 +52,10 @@ flowchart LR
 │   ├── schemas.py
 │   ├── requirements.txt
 │   └── modelo/
+│       ├── treinamento.ipynb
 │       └── model.pkl
 ├── tests/
 │   └── test_api.py
-├── treinamento.ipynb
 └── README.md
 ```
 
