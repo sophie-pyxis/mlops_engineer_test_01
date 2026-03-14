@@ -3,7 +3,7 @@ name: CI/CD Pipeline - Titanic MLOps
 on:
   push:
     branches:
-      - main
+      - master
 
 jobs:
   test-and-deploy:
