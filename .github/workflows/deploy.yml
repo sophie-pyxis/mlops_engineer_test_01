@@ -40,8 +40,19 @@ jobs:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
         run: |
           terraform init
+
           terraform import aws_dynamodb_table.titanic_table sobreviventes_titanic || true
           terraform import aws_iam_role.lambda_exec_role lambda_mlops_exec_role || true
           terraform import aws_iam_policy.lambda_policy arn:aws:iam::${AWS_ACCOUNT_ID}:policy/lambda_mlops_policy || true
           terraform import aws_lambda_function.titanic_ml titanic_inference_api || true
+
+          API_ID=$(aws apigateway get-rest-apis --query "items[?name=='titanic-ml-api'].id" --output text)
+          if [ -n "$API_ID" ]; then
+            terraform import aws_api_gateway_rest_api.titanic_api $API_ID || true
+            STATEMENT_ID=$(aws lambda get-policy --function-name titanic_inference_api --query 'Policy' --output text | python3 -c "import json,sys; p=json.load(sys.stdin); print(p['Statement'][0]['Sid'])" 2>/dev/null)
+            if [ -n "$STATEMENT_ID" ]; then
+              terraform import aws_lambda_permission.apigw_invoke_permission titanic_inference_api/$STATEMENT_ID || true
+            fi
+          fi
+
           terraform apply -auto-approve
