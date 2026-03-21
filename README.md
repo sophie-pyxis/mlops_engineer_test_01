@@ -121,7 +121,7 @@ flowchart TD
 
 O modelo foi treinado no notebook `treinamento.ipynb` usando o dataset público do Titanic.
 
-**Algoritmo:** `RandomForestClassifier` (Scikit-learn 1.2.2)
+**Algoritmo:** `RandomForestClassifier` (Scikit-learn)
 - `n_estimators=100`, `max_depth=5`, `oob_score=True`, `random_state=42`
 - ROC-AUC no conjunto de teste: **0.80**
 
